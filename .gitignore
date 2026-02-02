@@ -1,0 +1,76 @@
+############################
+# OS / System
+############################
+.DS_Store
+Thumbs.db
+
+############################
+# Python
+############################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+
+############################
+# Virtual Environments
+############################
+venv/
+.venv/
+env/
+ENV/
+
+############################
+# Jupyter / Experiments
+############################
+.ipynb_checkpoints/
+
+############################
+# ML / Audio artifacts
+############################
+# feature cache (CQT, chroma, spectrograms, etc.)
+features/
+cache/
+outputs/
+checkpoints/
+models/
+
+############################
+# 🎵 Audio / Dataset (IMPORTANT)
+############################
+data/
+dataset/
+datasets/
+audio/
+songs/
+music/
+
+*.wav
+*.mp3
+*.flac
+*.aac
+*.ogg
+*.m4a
+
+############################
+# Logs / Results
+############################
+*.log
+logs/
+results/
+
+############################
+# IDE / Editor
+############################
+.vscode/
+.idea/
+
+############################
+# Environment / Secrets
+############################
+.env
+.env.*
