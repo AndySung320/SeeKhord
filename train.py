@@ -2,12 +2,12 @@
 Train frame-level chord recognition (CRNN on precomputed chroma).
 Run from project root: python train.py
   or: python train.py --config config.yaml
-  Colab: set data_root in YAML to your Drive path (see config.colab.example.yaml).
-Writes training_history.json each epoch for plotting in a notebook.
+  Colab: set data_root + output.dir (e.g. Drive checkpoints folder); ckpt/history get a datetime suffix.
 """
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dataset import IGNORE_INDEX, ChordDataset, get_num_classes
-from models.crnn import ChordCRNN
+from models.crnn import ChordCRNN, default_chord_crnn_kwargs
 
 
 def _resolve_under_root(root: Path, p: str) -> str:
@@ -67,16 +67,18 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
     ns.device = args.device if args._cli_device else (dev if dev is not None else None)
 
     oc = cfg.get("output", {})
-    save_default = Path(oc.get("checkpoint", "checkpoints/chord_crnn.pt"))
-    hist_default = Path(oc.get("history", "checkpoints/training_history.json"))
-    ns.save = args.save if args._cli_save else (root / save_default if not save_default.is_absolute() else save_default)
-    ns.history = args.history if args._cli_history else (root / hist_default if not hist_default.is_absolute() else hist_default)
-    if not isinstance(ns.save, Path):
-        ns.save = Path(ns.save)
-    if not isinstance(ns.history, Path):
-        ns.history = Path(ns.history)
-    ns.save = ns.save.resolve()
-    ns.history = ns.history.resolve()
+    if "dir" in oc:
+        out_dir_raw = oc["dir"]
+    elif oc.get("checkpoint"):
+        out_dir_raw = str(Path(oc["checkpoint"]).parent)
+    else:
+        out_dir_raw = "checkpoints"
+    out_dir_p = Path(out_dir_raw)
+    ns.output_dir = out_dir_p.resolve() if out_dir_p.is_absolute() else (root / out_dir_p).resolve()
+    ns.checkpoint_prefix = oc.get("checkpoint_prefix", "chord_crnn")
+    ns.history_prefix = oc.get("history_prefix", "training_history")
+    if args._cli_output_dir:
+        ns.output_dir = Path(args.output_dir).resolve()
 
     return ns
 
@@ -98,12 +100,11 @@ def parse_args():
     p.add_argument("--weight-decay", type=float, default=None)
     p.add_argument("--num-workers", type=int, default=None)
     p.add_argument("--device", default=None, help="cuda or cpu (default: auto)")
-    p.add_argument("--save", type=Path, default=None)
     p.add_argument(
-        "--history",
+        "--output-dir",
         type=Path,
         default=None,
-        help="JSON with per-epoch train/val loss & acc",
+        help="Where to save checkpoint + history (default: config output.dir or data_root/checkpoints)",
     )
     p.add_argument("--no-progress", action="store_true", help="disable tqdm progress bars")
     args = p.parse_args()
@@ -115,8 +116,7 @@ def parse_args():
     args._cli_weight_decay = args.weight_decay is not None
     args._cli_num_workers = args.num_workers is not None
     args._cli_device = args.device is not None
-    args._cli_save = args.save is not None
-    args._cli_history = args.history is not None
+    args._cli_output_dir = args.output_dir is not None
     if args.config is None:
         default_cfg = ROOT / "config.yaml"
         if default_cfg.is_file():
@@ -135,10 +135,6 @@ def parse_args():
         args.weight_decay = 1e-4
     if args.num_workers is None:
         args.num_workers = 0
-    if args.save is None:
-        args.save = Path("checkpoints/chord_crnn.pt")
-    if args.history is None:
-        args.history = Path("checkpoints/training_history.json")
     return args
 
 
@@ -154,6 +150,46 @@ def write_history(path: Path, meta: dict, epochs: list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "epochs": epochs}, f, ensure_ascii=False, indent=2)
+
+
+def _namespace_to_json_dict(ns: argparse.Namespace) -> dict:
+    out = {}
+    for k, v in vars(ns).items():
+        if k.startswith("_"):
+            continue
+        if isinstance(v, Path):
+            out[k] = str(v)
+        elif isinstance(v, (str, int, float, bool, type(None))):
+            out[k] = v
+        else:
+            out[k] = str(v)
+    return out
+
+
+def _cli_args_for_json(cli: argparse.Namespace) -> dict:
+    skip_prefix = "_"
+    out = {}
+    for k, v in vars(cli).items():
+        if k.startswith(skip_prefix):
+            continue
+        if isinstance(v, Path):
+            out[k] = str(v) if v is not None else None
+        else:
+            out[k] = v
+    return out
+
+
+def _model_arch_dict(model: nn.Module, init_kwargs: dict) -> dict:
+    kw = {}
+    for k, v in init_kwargs.items():
+        kw[k] = list(v) if isinstance(v, tuple) else v
+    return {
+        "class": model.__class__.__name__,
+        "module": model.__class__.__module__,
+        "init_kwargs": kw,
+        "repr": str(model),
+        "num_parameters": sum(p.numel() for p in model.parameters()),
+    }
 
 
 def run_epoch(
@@ -198,11 +234,18 @@ def main():
     args_cli = parse_args()
     args = build_train_namespace(args_cli)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_started_iso = datetime.now().isoformat(timespec="seconds")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = args.output_dir / f"{args.checkpoint_prefix}_{run_stamp}.pt"
+    history_path = args.output_dir / f"{args.history_prefix}_{run_stamp}.json"
 
     print(f"data_root: {args.data_root}")
     print(f"splits: {args.splits_path}")
     print(f"vocabulary: {args.vocab_path}")
     print(f"songs: {args.songs_dir}")
+    print(f"checkpoint: {save_path}")
+    print(f"history: {history_path}")
 
     reduced_25 = args.reduced == "25"
     reduced_61 = args.reduced == "61"
@@ -230,7 +273,8 @@ def main():
         return
 
     num_classes = get_num_classes(reduced_25=reduced_25, reduced_61=reduced_61, vocab_path=args.vocab_path)
-    model = ChordCRNN(num_classes=num_classes).to(device)
+    model_kw = default_chord_crnn_kwargs(num_classes)
+    model = ChordCRNN(**model_kw).to(device)
     criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -249,7 +293,6 @@ def main():
         pin_memory=device.type == "cuda",
     )
 
-    args.save.parent.mkdir(parents=True, exist_ok=True)
     meta = {
         "data_root": str(args.data_root),
         "reduced": args.reduced,
@@ -259,6 +302,14 @@ def main():
         "weight_decay": args.weight_decay,
         "num_classes": num_classes,
         "device": str(device),
+        "run_stamp": run_stamp,
+        "run_started_iso": run_started_iso,
+        "save_path": str(save_path),
+        "history_path": str(history_path),
+        "config_path": str(args_cli.config) if args_cli.config else None,
+        "args_cli": _cli_args_for_json(args_cli),
+        "args_merged": _namespace_to_json_dict(args),
+        "model": _model_arch_dict(model, model_kw),
     }
     history_epochs: list = []
     best_val = float("inf")
@@ -294,7 +345,7 @@ def main():
                 "val_acc": round(va_acc, 6),
             }
         )
-        write_history(args.history, meta, history_epochs)
+        write_history(history_path, meta, history_epochs)
         if va_loss < best_val:
             best_val = va_loss
             torch.save(
@@ -303,12 +354,17 @@ def main():
                     "num_classes": num_classes,
                     "reduced": args.reduced,
                     "segment_frames": args.segment_frames,
+                    "run_stamp": run_stamp,
+                    "meta": meta,
+                    "model_class": "ChordCRNN",
+                    "model_init_kwargs": {k: (list(v) if isinstance(v, tuple) else v) for k, v in model_kw.items()},
+                    "model_repr": str(model),
                 },
-                args.save,
+                save_path,
             )
-            print(f"  saved {args.save}")
+            print(f"  saved {save_path}")
 
-    print(f"History written to {args.history}")
+    print(f"History written to {history_path}")
 
 
 if __name__ == "__main__":

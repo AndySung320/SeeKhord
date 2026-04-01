@@ -17,5 +17,6 @@ train:
   device: null
 
 output:
-  checkpoint: checkpoints/chord_crnn.pt
-  history: checkpoints/training_history.json
+  dir: /content/drive/MyDrive/dl_project/checkpoints
+  checkpoint_prefix: chord_crnn
+  history_prefix: training_history

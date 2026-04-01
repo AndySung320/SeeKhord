@@ -17,6 +17,8 @@ train:
   num_workers: 0      # Colab usually keep 0
   device: null        # null = auto cuda/cpu
 
+# Saves {checkpoint_prefix}_{YYYYMMDD_HHMMSS}.pt and same for history under dir
 output:
-  checkpoint: checkpoints/chord_crnn.pt
-  history: checkpoints/training_history.json
+  dir: checkpoints
+  checkpoint_prefix: chord_crnn
+  history_prefix: training_history
