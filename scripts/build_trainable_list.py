@@ -2,14 +2,17 @@
 Build trainable songs list: only songs with both MP3 and chord annotations.
 Output: data/trainable_songs.json
 If metadata.json is missing (e.g. download didn't save it), duration is read from the MP3 file.
+MP3 may live in songs/<index>/ or raw_songs/<index>/ (after scripts/move_mp3_to_raw_songs.py).
 """
 import json
 import os
 from pathlib import Path
 
-SONGS_DIR = "songs"
-CORRECTED_PATH = "data/MIR-CE500_corrected.json"
-OUTPUT_PATH = "data/trainable_songs.json"
+ROOT = Path(__file__).resolve().parent.parent
+SONGS_DIR = ROOT / "songs"
+RAW_SONGS_DIR = ROOT / "raw_songs"
+CORRECTED_PATH = ROOT / "data/MIR-CE500_corrected.json"
+OUTPUT_PATH = ROOT / "data/trainable_songs.json"
 # Duration mismatch: if annotation end and audio duration differ by more than this (sec) or ratio, we still include
 # but record effective length as min(audio_duration, annotation_end) and store duration_diff_sec.
 MAX_DURATION_DIFF_SEC = 5
@@ -30,7 +33,7 @@ def main():
         corrected = json.load(f)
 
     trainable = []
-    for song_dir in sorted(Path(SONGS_DIR).iterdir()):
+    for song_dir in sorted(SONGS_DIR.iterdir()):
         if not song_dir.is_dir():
             continue
         index = song_dir.name
@@ -38,7 +41,11 @@ def main():
 
         mp3_path = song_dir / f"{index}.mp3"
         if not mp3_path.is_file():
-            continue
+            alt = RAW_SONGS_DIR / index / f"{index}.mp3"
+            if alt.is_file():
+                mp3_path = alt
+            else:
+                continue
 
         if index_raw not in corrected:
             continue
@@ -71,7 +78,7 @@ def main():
         else:
             effective_end = min(audio_duration_sec, annotation_end_sec)
 
-        path_mp3 = str(mp3_path).replace("\\", "/")
+        path_mp3 = str(mp3_path.relative_to(ROOT)).replace("\\", "/")
         entry = {
             "index": index,
             "index_raw": index_raw,

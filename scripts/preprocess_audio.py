@@ -1,6 +1,7 @@
 """
 Preprocess each trainable song: load MP3, extract features (chroma CQT), build frame-level labels.
 Writes songs/<index>/features.npy and songs/<index>/labels.npy. Skips if both already exist.
+Paths are relative to project root (parent of scripts/).
 """
 import json
 import os
@@ -14,15 +15,17 @@ try:
 except ImportError:
     librosa = None
 
+ROOT = Path(__file__).resolve().parent.parent
+
 SR = 22050
 FPS = 10
 HOP_LENGTH = SR // FPS  # 2205
-N_FFT = 2048
 N_CHROMA = 12
 
-TRAINABLE_PATH = "data/trainable_songs.json"
-CORRECTED_PATH = "data/MIR-CE500_corrected.json"
-VOCAB_PATH = "data/chord_vocabulary.json"
+TRAINABLE_PATH = ROOT / "data/trainable_songs.json"
+CORRECTED_PATH = ROOT / "data/MIR-CE500_corrected.json"
+VOCAB_PATH = ROOT / "data/chord_vocabulary.json"
+SONGS_DIR = ROOT / "songs"
 SKIP_EXISTING = True
 
 
@@ -42,10 +45,12 @@ def segments_to_frame_labels(segments, frame_times, vocab):
 def process_one(entry, corrected, vocab):
     index = entry["index"]
     index_raw = entry["index_raw"]
-    path_mp3 = entry["path_mp3"]
+    path_mp3 = Path(entry["path_mp3"])
+    if not path_mp3.is_absolute():
+        path_mp3 = ROOT / path_mp3
     effective_end_sec = entry["effective_end_sec"]
 
-    out_dir = Path("songs") / index
+    out_dir = SONGS_DIR / index
     feat_path = out_dir / "features.npy"
     label_path = out_dir / "labels.npy"
     if SKIP_EXISTING and feat_path.is_file() and label_path.is_file():
@@ -54,16 +59,15 @@ def process_one(entry, corrected, vocab):
     if not librosa:
         raise RuntimeError("librosa is required for preprocess_audio. Install with: pip install librosa")
 
-    y, sr = librosa.load(path_mp3, sr=SR, mono=True, duration=effective_end_sec)
+    y, sr = librosa.load(str(path_mp3), sr=SR, mono=True, duration=effective_end_sec)
     if len(y) == 0:
         return "empty_audio"
 
-    # Chroma CQT @ 10 fps
+    # Chroma CQT @ 10 fps (chroma_cqt has no n_fft; CQT uses constant-Q, not STFT n_fft)
     chroma = librosa.feature.chroma_cqt(
         y=y,
         sr=sr,
         hop_length=HOP_LENGTH,
-        n_fft=N_FFT,
         n_chroma=N_CHROMA,
     )
     # (n_chroma, n_frames) -> (n_frames, n_chroma)
@@ -99,18 +103,26 @@ def main():
         vocab_data = json.load(f)
     vocab = vocab_data["vocabulary"]
 
+    total = len(trainable)
+    print(f"Project root: {ROOT}")
+    print(f"Trainable songs: {total}")
     done = 0
     skipped = 0
     errors = []
-    for entry in trainable:
+    for i, entry in enumerate(trainable, start=1):
+        idx = entry["index"]
+        print(f"[{i}/{total}] {idx} ...", end=" ", flush=True)
         try:
             result = process_one(entry, corrected, vocab)
             if result is None:
                 skipped += 1
+                print("skip (already exists)")
             else:
                 done += 1
+                print(f"ok T={result[0]} F={result[1]}")
         except Exception as e:
-            errors.append((entry["index"], str(e)))
+            errors.append((idx, str(e)))
+            print(f"ERROR: {e}")
     if errors:
         print("Errors:", errors[:10])
         if len(errors) > 10:

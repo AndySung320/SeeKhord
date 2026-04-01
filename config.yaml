@@ -1,0 +1,22 @@
+# Local default: data_root is the project root (contains data/ and songs/)
+# Colab: change to mounted path, e.g. /content/drive/MyDrive/SeeKhord
+data_root: .
+
+paths:
+  splits: data/splits.json
+  vocabulary: data/chord_vocabulary.json
+  songs: songs
+
+train:
+  reduced: "25"       # full | 25 | 61
+  segment_frames: 200
+  batch_size: 16
+  epochs: 30
+  lr: 0.001
+  weight_decay: 0.0001
+  num_workers: 0      # Colab usually keep 0
+  device: null        # null = auto cuda/cpu
+
+output:
+  checkpoint: checkpoints/chord_crnn.pt
+  history: checkpoints/training_history.json
