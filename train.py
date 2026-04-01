@@ -9,9 +9,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -103,6 +105,7 @@ def parse_args():
         default=None,
         help="JSON with per-epoch train/val loss & acc",
     )
+    p.add_argument("--no-progress", action="store_true", help="disable tqdm progress bars")
     args = p.parse_args()
     args._cli_reduced = args.reduced is not None
     args._cli_segment_frames = args.segment_frames is not None
@@ -153,7 +156,16 @@ def write_history(path: Path, meta: dict, epochs: list) -> None:
         json.dump({"meta": meta, "epochs": epochs}, f, ensure_ascii=False, indent=2)
 
 
-def run_epoch(model, loader, criterion, optimizer, device, train: bool):
+def run_epoch(
+    model,
+    loader,
+    criterion,
+    optimizer,
+    device,
+    train: bool,
+    desc: str = "",
+    disable_progress: bool = False,
+):
     if train:
         model.train()
     else:
@@ -161,7 +173,8 @@ def run_epoch(model, loader, criterion, optimizer, device, train: bool):
     total_loss = 0.0
     total_acc = 0.0
     n_batches = 0
-    for x, y in loader:
+    it = loader if disable_progress else tqdm(loader, desc=desc, leave=True)
+    for x, y in it:
         x = x.to(device)
         y = y.to(device)
         if train:
@@ -173,8 +186,11 @@ def run_epoch(model, loader, criterion, optimizer, device, train: bool):
                 loss.backward()
                 optimizer.step()
         total_loss += loss.item()
-        total_acc += accuracy(logits, y)
+        batch_acc = accuracy(logits, y)
+        total_acc += batch_acc
         n_batches += 1
+        if not disable_progress and hasattr(it, "set_postfix"):
+            it.set_postfix(loss=f"{loss.item():.4f}", acc=f"{batch_acc:.4f}")
     return total_loss / max(n_batches, 1), total_acc / max(n_batches, 1)
 
 
@@ -246,9 +262,28 @@ def main():
     }
     history_epochs: list = []
     best_val = float("inf")
+    show = not args_cli.no_progress
     for epoch in range(1, args.epochs + 1):
-        tr_loss, tr_acc = run_epoch(model, train_loader, criterion, optimizer, device, train=True)
-        va_loss, va_acc = run_epoch(model, val_loader, criterion, optimizer, device, train=False)
+        tr_loss, tr_acc = run_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            train=True,
+            desc=f"train e{epoch}/{args.epochs}",
+            disable_progress=not show,
+        )
+        va_loss, va_acc = run_epoch(
+            model,
+            val_loader,
+            criterion,
+            optimizer,
+            device,
+            train=False,
+            desc=f"val   e{epoch}/{args.epochs}",
+            disable_progress=not show,
+        )
         print(f"epoch {epoch:3d}  train loss {tr_loss:.4f} acc {tr_acc:.4f}  val loss {va_loss:.4f} acc {va_acc:.4f}")
         history_epochs.append(
             {
