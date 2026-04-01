@@ -12,7 +12,12 @@ train:
   batch_size: 32
   epochs: 30
   lr: 0.001
-  weight_decay: 0.0001
+  weight_decay: 0.0003
+  dropout: 0.4
+  scheduler: plateau
+  scheduler_patience: 4
+  scheduler_factor: 0.5
+  scheduler_min_lr: 1.0e-6
   num_workers: 0
   device: null
 

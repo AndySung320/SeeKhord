@@ -61,7 +61,18 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
     ns.batch_size = args.batch_size if args._cli_batch_size else int(tc.get("batch_size", 16))
     ns.epochs = args.epochs if args._cli_epochs else int(tc.get("epochs", 30))
     ns.lr = args.lr if args._cli_lr else float(tc.get("lr", 1e-3))
-    ns.weight_decay = args.weight_decay if args._cli_weight_decay else float(tc.get("weight_decay", 1e-4))
+    ns.weight_decay = args.weight_decay if args._cli_weight_decay else float(tc.get("weight_decay", 3e-4))
+    ns.dropout = float(args.dropout if args._cli_dropout else tc.get("dropout", 0.4))
+    ns.scheduler = str(args.scheduler if args._cli_scheduler else tc.get("scheduler", "plateau")).lower()
+    ns.scheduler_patience = int(
+        args.scheduler_patience if args._cli_scheduler_patience else tc.get("scheduler_patience", 4)
+    )
+    ns.scheduler_factor = float(
+        args.scheduler_factor if args._cli_scheduler_factor else tc.get("scheduler_factor", 0.5)
+    )
+    ns.scheduler_min_lr = float(
+        args.scheduler_min_lr if args._cli_scheduler_min_lr else float(tc.get("scheduler_min_lr", 1e-6))
+    )
     ns.num_workers = args.num_workers if args._cli_num_workers else int(tc.get("num_workers", 0))
     dev = tc.get("device", None)
     ns.device = args.device if args._cli_device else (dev if dev is not None else None)
@@ -98,6 +109,16 @@ def parse_args():
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--weight-decay", type=float, default=None)
+    p.add_argument("--dropout", type=float, default=None, help="ChordCRNN dropout (default 0.4)")
+    p.add_argument(
+        "--scheduler",
+        choices=("none", "plateau"),
+        default=None,
+        help="LR schedule: ReduceLROnPlateau on val loss, or none",
+    )
+    p.add_argument("--scheduler-patience", type=int, default=None, help="plateau epochs before lr reduce")
+    p.add_argument("--scheduler-factor", type=float, default=None, help="lr *= factor on plateau")
+    p.add_argument("--scheduler-min-lr", type=float, default=None, help="minimum lr for plateau")
     p.add_argument("--num-workers", type=int, default=None)
     p.add_argument("--device", default=None, help="cuda or cpu (default: auto)")
     p.add_argument(
@@ -114,6 +135,11 @@ def parse_args():
     args._cli_epochs = args.epochs is not None
     args._cli_lr = args.lr is not None
     args._cli_weight_decay = args.weight_decay is not None
+    args._cli_dropout = args.dropout is not None
+    args._cli_scheduler = args.scheduler is not None
+    args._cli_scheduler_patience = args.scheduler_patience is not None
+    args._cli_scheduler_factor = args.scheduler_factor is not None
+    args._cli_scheduler_min_lr = args.scheduler_min_lr is not None
     args._cli_num_workers = args.num_workers is not None
     args._cli_device = args.device is not None
     args._cli_output_dir = args.output_dir is not None
@@ -132,7 +158,17 @@ def parse_args():
     if args.lr is None:
         args.lr = 1e-3
     if args.weight_decay is None:
-        args.weight_decay = 1e-4
+        args.weight_decay = 3e-4
+    if args.dropout is None:
+        args.dropout = 0.4
+    if args.scheduler is None:
+        args.scheduler = "plateau"
+    if args.scheduler_patience is None:
+        args.scheduler_patience = 4
+    if args.scheduler_factor is None:
+        args.scheduler_factor = 0.5
+    if args.scheduler_min_lr is None:
+        args.scheduler_min_lr = 1e-6
     if args.num_workers is None:
         args.num_workers = 0
     return args
@@ -273,10 +309,25 @@ def main():
         return
 
     num_classes = get_num_classes(reduced_25=reduced_25, reduced_61=reduced_61, vocab_path=args.vocab_path)
-    model_kw = default_chord_crnn_kwargs(num_classes)
+    model_kw = default_chord_crnn_kwargs(num_classes, dropout=args.dropout)
     model = ChordCRNN(**model_kw).to(device)
     criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = None
+    if args.scheduler == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=args.scheduler_factor,
+            patience=args.scheduler_patience,
+            min_lr=args.scheduler_min_lr,
+        )
+        print(
+            f"scheduler: ReduceLROnPlateau(patience={args.scheduler_patience}, "
+            f"factor={args.scheduler_factor}, min_lr={args.scheduler_min_lr})"
+        )
+    else:
+        print("scheduler: none")
 
     train_loader = DataLoader(
         train_ds,
@@ -300,6 +351,11 @@ def main():
         "batch_size": args.batch_size,
         "lr": args.lr,
         "weight_decay": args.weight_decay,
+        "dropout": args.dropout,
+        "scheduler": args.scheduler,
+        "scheduler_patience": args.scheduler_patience,
+        "scheduler_factor": args.scheduler_factor,
+        "scheduler_min_lr": args.scheduler_min_lr,
         "num_classes": num_classes,
         "device": str(device),
         "run_stamp": run_stamp,
@@ -335,10 +391,17 @@ def main():
             desc=f"val   e{epoch}/{args.epochs}",
             disable_progress=not show,
         )
-        print(f"epoch {epoch:3d}  train loss {tr_loss:.4f} acc {tr_acc:.4f}  val loss {va_loss:.4f} acc {va_acc:.4f}")
+        current_lr = optimizer.param_groups[0]["lr"]
+        if scheduler is not None:
+            scheduler.step(va_loss)
+        print(
+            f"epoch {epoch:3d}  lr {current_lr:.2e}  "
+            f"train loss {tr_loss:.4f} acc {tr_acc:.4f}  val loss {va_loss:.4f} acc {va_acc:.4f}"
+        )
         history_epochs.append(
             {
                 "epoch": epoch,
+                "lr": round(current_lr, 10),
                 "train_loss": round(tr_loss, 6),
                 "train_acc": round(tr_acc, 6),
                 "val_loss": round(va_loss, 6),

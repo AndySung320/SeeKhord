@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 
-def default_chord_crnn_kwargs(num_classes: int) -> dict:
+def default_chord_crnn_kwargs(num_classes: int, dropout: float = 0.4) -> dict:
     """Kwargs to reconstruct ChordCRNN (for saving run metadata)."""
     return {
         "num_classes": num_classes,
@@ -17,7 +17,7 @@ def default_chord_crnn_kwargs(num_classes: int) -> dict:
         "kernel_size": 5,
         "lstm_hidden": 128,
         "lstm_layers": 2,
-        "dropout": 0.3,
+        "dropout": dropout,
     }
 
 
@@ -30,7 +30,7 @@ class ChordCRNN(nn.Module):
         kernel_size: int = 5,
         lstm_hidden: int = 128,
         lstm_layers: int = 2,
-        dropout: float = 0.3,
+        dropout: float = 0.4,
     ):
         super().__init__()
         self.input_dim = input_dim

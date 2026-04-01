@@ -13,7 +13,12 @@ train:
   batch_size: 16
   epochs: 30
   lr: 0.001
-  weight_decay: 0.0001
+  weight_decay: 0.0003   # stronger L2 (was 1e-4)
+  dropout: 0.4           # ChordCRNN dropout
+  scheduler: plateau     # none | plateau — ReduceLROnPlateau on val loss
+  scheduler_patience: 4
+  scheduler_factor: 0.5
+  scheduler_min_lr: 1.0e-6
   num_workers: 0      # Colab usually keep 0
   device: null        # null = auto cuda/cpu
 
