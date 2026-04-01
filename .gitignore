@@ -3,6 +3,7 @@
 ############################
 .DS_Store
 Thumbs.db
+*.zip
 
 ############################
 # Python
@@ -37,7 +38,10 @@ features/
 cache/
 outputs/
 checkpoints/
-models/
+# Do not ignore ./models/ package; ignore common downloaded weight files at repo root
+/*.pt
+/*.pth
+/*.ckpt
 
 ############################
 # 🎵 Audio / Dataset (IMPORTANT)
@@ -47,6 +51,7 @@ dataset/
 datasets/
 audio/
 songs/
+raw_songs/
 music/
 
 *.wav
