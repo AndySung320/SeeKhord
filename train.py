@@ -319,6 +319,9 @@ def main():
     print(f"vocabulary: {args.vocab_path}")
     print(f"songs: {args.songs_dir}")
     print(f"input_dim: {args.input_dim}")
+
+    reduced_25 = args.reduced == "25"
+    reduced_61 = args.reduced == "61"
     if reduced_25:
         print(
             f"augment_pitch: {args.augment_pitch} "
@@ -326,9 +329,6 @@ def main():
         )
     print(f"checkpoint: {save_path}")
     print(f"history: {history_path}")
-
-    reduced_25 = args.reduced == "25"
-    reduced_61 = args.reduced == "61"
 
     train_ds = ChordDataset(
         "train",
