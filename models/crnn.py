@@ -1,6 +1,6 @@
 """
 Frame-level chord classifier: 1D CNN over time + BiLSTM + per-frame logits.
-Input: (batch, time, 12) chroma features from preprocess.
+Input: (batch, time, F) features from preprocess (F=12 chroma or F=84 log-CQT, etc.).
 """
 from typing import Tuple
 
@@ -8,11 +8,11 @@ import torch
 import torch.nn as nn
 
 
-def default_chord_crnn_kwargs(num_classes: int, dropout: float = 0.4) -> dict:
+def default_chord_crnn_kwargs(num_classes: int, dropout: float = 0.4, input_dim: int = 12) -> dict:
     """Kwargs to reconstruct ChordCRNN (for saving run metadata)."""
     return {
         "num_classes": num_classes,
-        "input_dim": 12,
+        "input_dim": input_dim,
         "conv_channels": (64, 128, 128),
         "kernel_size": 5,
         "lstm_hidden": 128,

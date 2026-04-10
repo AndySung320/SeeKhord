@@ -1,5 +1,5 @@
 """
-Train frame-level chord recognition (CRNN on precomputed chroma).
+Train frame-level chord recognition (CRNN on precomputed frame features).
 Run from project root: python train.py
   or: python train.py --config config.yaml
   Colab: set data_root + output.dir (e.g. Drive checkpoints folder); ckpt/history get a datetime suffix.
@@ -57,6 +57,7 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
 
     tc = cfg.get("train", {})
     ns.reduced = str(args.reduced if args._cli_reduced else tc.get("reduced", "25"))
+    ns.input_dim = int(args.input_dim if args._cli_input_dim else int(tc.get("input_dim", 12)))
     ns.segment_frames = args.segment_frames if args._cli_segment_frames else int(tc.get("segment_frames", 200))
     ns.batch_size = args.batch_size if args._cli_batch_size else int(tc.get("batch_size", 16))
     ns.epochs = args.epochs if args._cli_epochs else int(tc.get("epochs", 30))
@@ -111,6 +112,12 @@ def parse_args():
     p.add_argument("--weight-decay", type=float, default=None)
     p.add_argument("--dropout", type=float, default=None, help="ChordCRNN dropout (default 0.4)")
     p.add_argument(
+        "--input-dim",
+        type=int,
+        default=None,
+        help="Feature size per frame (12 for chroma features.npy, 84 for cqt84)",
+    )
+    p.add_argument(
         "--scheduler",
         choices=("none", "plateau"),
         default=None,
@@ -136,6 +143,7 @@ def parse_args():
     args._cli_lr = args.lr is not None
     args._cli_weight_decay = args.weight_decay is not None
     args._cli_dropout = args.dropout is not None
+    args._cli_input_dim = args.input_dim is not None
     args._cli_scheduler = args.scheduler is not None
     args._cli_scheduler_patience = args.scheduler_patience is not None
     args._cli_scheduler_factor = args.scheduler_factor is not None
@@ -280,6 +288,7 @@ def main():
     print(f"splits: {args.splits_path}")
     print(f"vocabulary: {args.vocab_path}")
     print(f"songs: {args.songs_dir}")
+    print(f"input_dim: {args.input_dim}")
     print(f"checkpoint: {save_path}")
     print(f"history: {history_path}")
 
@@ -309,7 +318,7 @@ def main():
         return
 
     num_classes = get_num_classes(reduced_25=reduced_25, reduced_61=reduced_61, vocab_path=args.vocab_path)
-    model_kw = default_chord_crnn_kwargs(num_classes, dropout=args.dropout)
+    model_kw = default_chord_crnn_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
     model = ChordCRNN(**model_kw).to(device)
     criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -352,6 +361,7 @@ def main():
         "lr": args.lr,
         "weight_decay": args.weight_decay,
         "dropout": args.dropout,
+        "input_dim": args.input_dim,
         "scheduler": args.scheduler,
         "scheduler_patience": args.scheduler_patience,
         "scheduler_factor": args.scheduler_factor,
