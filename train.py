@@ -78,6 +78,21 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
     dev = tc.get("device", None)
     ns.device = args.device if args._cli_device else (dev if dev is not None else None)
 
+    if args._cli_no_augment_pitch:
+        ns.augment_pitch = False
+    else:
+        ns.augment_pitch = bool(tc.get("augment_pitch", True))
+    ns.augment_prob = (
+        float(args.augment_prob)
+        if args._cli_augment_prob
+        else float(tc.get("augment_prob", 0.5))
+    )
+    ns.pitch_shift_max = (
+        int(args.pitch_shift_max)
+        if args._cli_pitch_shift_max
+        else int(tc.get("pitch_shift_max", 5))
+    )
+
     oc = cfg.get("output", {})
     if "dir" in oc:
         out_dir_raw = oc["dir"]
@@ -127,6 +142,18 @@ def parse_args():
     p.add_argument("--scheduler-factor", type=float, default=None, help="lr *= factor on plateau")
     p.add_argument("--scheduler-min-lr", type=float, default=None, help="minimum lr for plateau")
     p.add_argument("--num-workers", type=int, default=None)
+    p.add_argument(
+        "--no-augment-pitch",
+        action="store_true",
+        help="disable train-time pitch roll + reduced_25 label rotation (overrides config)",
+    )
+    p.add_argument("--augment-prob", type=float, default=None, help="probability of pitch shift per sample (train)")
+    p.add_argument(
+        "--pitch-shift-max",
+        type=int,
+        default=None,
+        help="max |semitones| for pitch shift (integer roll; excludes 0)",
+    )
     p.add_argument("--device", default=None, help="cuda or cpu (default: auto)")
     p.add_argument(
         "--output-dir",
@@ -151,6 +178,9 @@ def parse_args():
     args._cli_num_workers = args.num_workers is not None
     args._cli_device = args.device is not None
     args._cli_output_dir = args.output_dir is not None
+    args._cli_no_augment_pitch = bool(args.no_augment_pitch)
+    args._cli_augment_prob = args.augment_prob is not None
+    args._cli_pitch_shift_max = args.pitch_shift_max is not None
     if args.config is None:
         default_cfg = ROOT / "config.yaml"
         if default_cfg.is_file():
@@ -289,6 +319,11 @@ def main():
     print(f"vocabulary: {args.vocab_path}")
     print(f"songs: {args.songs_dir}")
     print(f"input_dim: {args.input_dim}")
+    if reduced_25:
+        print(
+            f"augment_pitch: {args.augment_pitch} "
+            f"(prob={args.augment_prob}, pitch_shift_max={args.pitch_shift_max}, train only)"
+        )
     print(f"checkpoint: {save_path}")
     print(f"history: {history_path}")
 
@@ -303,6 +338,9 @@ def main():
         reduced_25=reduced_25,
         reduced_61=reduced_61,
         vocab_path=args.vocab_path,
+        augment_pitch=args.augment_pitch and reduced_25,
+        augment_prob=args.augment_prob,
+        pitch_shift_max=args.pitch_shift_max,
     )
     val_ds = ChordDataset(
         "val",
@@ -366,6 +404,9 @@ def main():
         "scheduler_patience": args.scheduler_patience,
         "scheduler_factor": args.scheduler_factor,
         "scheduler_min_lr": args.scheduler_min_lr,
+        "augment_pitch": args.augment_pitch and reduced_25,
+        "augment_prob": args.augment_prob,
+        "pitch_shift_max": args.pitch_shift_max,
         "num_classes": num_classes,
         "device": str(device),
         "run_stamp": run_stamp,

@@ -25,6 +25,9 @@ train:
   scheduler_min_lr: 1.0e-6
   num_workers: 0
   device: null
+  augment_pitch: true
+  augment_prob: 0.5
+  pitch_shift_max: 5
 
 output:
   dir: checkpoints

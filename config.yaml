@@ -22,6 +22,10 @@ train:
   scheduler_min_lr: 1.0e-6
   num_workers: 0      # Colab usually keep 0
   device: null        # null = auto cuda/cpu
+  # Train-only pitch augmentation (reduced_25 only): np.roll on features + matching label root rotation
+  augment_pitch: true
+  augment_prob: 0.5
+  pitch_shift_max: 5   # uniform integer in [-max..-1] ∪ [1..max]
 
 # Saves {checkpoint_prefix}_{YYYYMMDD_HHMMSS}.pt and same for history under dir
 output:
