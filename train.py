@@ -3,6 +3,8 @@ Train frame-level chord recognition (CRNN on precomputed frame features).
 Run from project root: python train.py
   or: python train.py --config config.yaml
   Colab: set data_root + output.dir (e.g. Drive checkpoints folder); ckpt/history get a datetime suffix.
+  Resume: python train.py --config ... --resume path/to/chord_crnn_cqt84_YYYYMMDD.pt
+    (loads model weights only; optimizer starts fresh. New run_stamp / history / save_path.)
 """
 import argparse
 import json
@@ -107,6 +109,16 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
     if args._cli_output_dir:
         ns.output_dir = Path(args.output_dir).resolve()
 
+    if args.resume is not None:
+        ns.resume_path = Path(args.resume).expanduser().resolve()
+    else:
+        rp = tc.get("resume")
+        if rp:
+            p = Path(str(rp).strip())
+            ns.resume_path = p.resolve() if p.is_absolute() else (root / p).resolve()
+        else:
+            ns.resume_path = None
+
     return ns
 
 
@@ -160,6 +172,12 @@ def parse_args():
         type=Path,
         default=None,
         help="Where to save checkpoint + history (default: config output.dir or data_root/checkpoints)",
+    )
+    p.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        help="Load model weights from a prior .pt (expects 'model' state_dict); optimizer not restored",
     )
     p.add_argument("--no-progress", action="store_true", help="disable tqdm progress bars")
     args = p.parse_args()
@@ -224,6 +242,43 @@ def write_history(path: Path, meta: dict, epochs: list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "epochs": epochs}, f, ensure_ascii=False, indent=2)
+
+
+def load_model_weights_from_checkpoint(
+    path: Path,
+    model: nn.Module,
+    device: torch.device,
+    *,
+    num_classes: int,
+    model_kw: dict,
+) -> dict:
+    """
+    Load ChordCRNN weights from torch.save dict. Validates num_classes and input_dim vs checkpoint meta.
+    Returns the raw checkpoint dict (for logging).
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"--resume checkpoint not found: {path}")
+    try:
+        ckpt = torch.load(path, map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(path, map_location=device)
+    if not isinstance(ckpt, dict) or "model" not in ckpt:
+        raise ValueError(f"Invalid checkpoint (expected dict with 'model' key): {path}")
+    saved_nc = ckpt.get("num_classes")
+    if saved_nc is not None and int(saved_nc) != int(num_classes):
+        raise ValueError(
+            f"Checkpoint num_classes={saved_nc} does not match current run num_classes={num_classes}"
+        )
+    mkw = ckpt.get("model_init_kwargs") or {}
+    if mkw:
+        if int(mkw.get("num_classes", num_classes)) != int(num_classes):
+            raise ValueError("Checkpoint model_init_kwargs.num_classes mismatch")
+        if int(mkw.get("input_dim", model_kw["input_dim"])) != int(model_kw["input_dim"]):
+            raise ValueError(
+                f"Checkpoint input_dim={mkw.get('input_dim')} does not match current input_dim={model_kw['input_dim']}"
+            )
+    model.load_state_dict(ckpt["model"], strict=True)
+    return ckpt
 
 
 def _namespace_to_json_dict(ns: argparse.Namespace) -> dict:
@@ -329,6 +384,8 @@ def main():
         )
     print(f"checkpoint: {save_path}")
     print(f"history: {history_path}")
+    if args.resume_path is not None:
+        print(f"resume: {args.resume_path}")
 
     train_ds = ChordDataset(
         "train",
@@ -358,6 +415,16 @@ def main():
     num_classes = get_num_classes(reduced_25=reduced_25, reduced_61=reduced_61, vocab_path=args.vocab_path)
     model_kw = default_chord_crnn_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
     model = ChordCRNN(**model_kw).to(device)
+    resume_ckpt = None
+    if args.resume_path is not None:
+        resume_ckpt = load_model_weights_from_checkpoint(
+            args.resume_path,
+            model,
+            device,
+            num_classes=num_classes,
+            model_kw=model_kw,
+        )
+        print(f"Loaded model weights from {args.resume_path}")
     criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = None
@@ -413,6 +480,8 @@ def main():
         "run_started_iso": run_started_iso,
         "save_path": str(save_path),
         "history_path": str(history_path),
+        "resume_from": str(args.resume_path) if args.resume_path else None,
+        "resume_run_stamp": (resume_ckpt.get("run_stamp") if resume_ckpt else None),
         "config_path": str(args_cli.config) if args_cli.config else None,
         "args_cli": _cli_args_for_json(args_cli),
         "args_merged": _namespace_to_json_dict(args),
