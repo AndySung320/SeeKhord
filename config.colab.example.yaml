@@ -8,6 +8,7 @@ paths:
 
 train:
   reduced: "25"
+  input_dim: 12 # 84 if using scripts/preprocess_audio.py --mode cqt84 --songs-dir songs_cqt84
   segment_frames: 200
   batch_size: 32
   epochs: 30

@@ -1,0 +1,32 @@
+# Example: 84-bin log-CQT features in a separate tree (do not overwrite chroma songs/).
+# 1) python scripts/preprocess_audio.py --mode cqt84 --songs-dir songs_cqt84
+# 2) python train.py --config config.cqt84.example.yaml
+#    (or copy paths + train.input_dim into your Colab config)
+
+data_root: .
+
+paths:
+  splits: data/splits.json
+  vocabulary: data/chord_vocabulary.json
+  songs: songs_cqt84
+
+train:
+  reduced: "25"
+  input_dim: 84
+  segment_frames: 200
+  batch_size: 16
+  epochs: 30
+  lr: 0.001
+  weight_decay: 0.0003
+  dropout: 0.4
+  scheduler: plateau
+  scheduler_patience: 4
+  scheduler_factor: 0.5
+  scheduler_min_lr: 1.0e-6
+  num_workers: 0
+  device: null
+
+output:
+  dir: checkpoints
+  checkpoint_prefix: chord_crnn_cqt84
+  history_prefix: training_history_cqt84
