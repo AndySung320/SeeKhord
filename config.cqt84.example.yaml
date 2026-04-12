@@ -28,6 +28,7 @@ train:
   augment_pitch: true
   augment_prob: 0.5
   pitch_shift_max: 5
+  # Optional: class_weight_json + class_weight_scheme (inv_sqrt | inv_freq); see config.yaml comments
 
 output:
   dir: checkpoints

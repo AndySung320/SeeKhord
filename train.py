@@ -6,11 +6,14 @@ Run from project root: python train.py
   Resume: python train.py --config ... --resume path/to/chord_crnn_cqt84_YYYYMMDD.pt
     (loads model weights only; optimizer starts fresh. New run_stamp / history / save_path.)
 """
+from __future__ import annotations
+
 import argparse
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -28,6 +31,46 @@ from models.crnn import ChordCRNN, default_chord_crnn_kwargs
 def _resolve_under_root(root: Path, p: str) -> str:
     path = Path(p)
     return str(path.resolve() if path.is_absolute() else (root / path).resolve())
+
+
+def load_class_weight_tensor(
+    path: Path,
+    num_classes: int,
+    scheme: str,
+    eps: float,
+    clip_max: Optional[float],
+) -> torch.Tensor:
+    """
+    Load per-class CE weights from JSON: either a 'weights' list or 'counts' with scheme inv_sqrt / inv_freq.
+    Weights are normalized so arithmetic mean equals 1; optional clip_max then re-normalize.
+    """
+    scheme = scheme.lower().strip()
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if "weights" in data:
+        w = torch.tensor(data["weights"], dtype=torch.float64)
+    elif "counts" in data:
+        if scheme in ("", "none"):
+            raise ValueError(
+                f"{path}: JSON has 'counts' but class_weight_scheme is none; set inv_sqrt or inv_freq."
+            )
+        counts = torch.tensor(data["counts"], dtype=torch.float64)
+        if scheme == "inv_sqrt":
+            w = 1.0 / torch.sqrt(torch.clamp(counts, min=1.0))
+        elif scheme == "inv_freq":
+            w = 1.0 / (counts + float(eps))
+        else:
+            raise ValueError(f"Unknown class_weight_scheme: {scheme}")
+    else:
+        raise ValueError(f"{path}: expected 'counts' or 'weights' in JSON")
+
+    if w.numel() != num_classes:
+        raise ValueError(f"{path}: expected {num_classes} weights, got {w.numel()}")
+    w = w * (num_classes / w.sum())
+    if clip_max is not None and clip_max > 0:
+        w = torch.clamp(w, max=float(clip_max))
+        w = w * (num_classes / w.sum())
+    return w.to(dtype=torch.float32)
 
 
 def load_yaml_config(path: Path) -> dict:
@@ -119,6 +162,28 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
         else:
             ns.resume_path = None
 
+    cw_cli = args._cli_class_weight_json
+    cw_raw = args.class_weight_json if cw_cli else tc.get("class_weight_json")
+    if cw_raw is None or (isinstance(cw_raw, str) and cw_raw.strip().lower() in ("", "none", "null")):
+        ns.class_weight_path = None
+    else:
+        p = Path(str(cw_raw).strip())
+        ns.class_weight_path = p.resolve() if p.is_absolute() else (root / p).resolve()
+
+    ns.class_weight_scheme = (
+        str(args.class_weight_scheme).lower().strip()
+        if args.class_weight_scheme is not None
+        else str(tc.get("class_weight_scheme", "none")).lower().strip()
+    )
+    ns.class_weight_eps = float(
+        args.class_weight_eps if args._cli_class_weight_eps else float(tc.get("class_weight_eps", 1.0))
+    )
+    if args._cli_class_weight_clip_max:
+        ns.class_weight_clip_max = float(args.class_weight_clip_max)
+    else:
+        cm = tc.get("class_weight_clip_max")
+        ns.class_weight_clip_max = float(cm) if cm is not None else None
+
     return ns
 
 
@@ -179,6 +244,30 @@ def parse_args():
         default=None,
         help="Load model weights from a prior .pt (expects 'model' state_dict); optimizer not restored",
     )
+    p.add_argument(
+        "--class-weight-json",
+        type=Path,
+        default=None,
+        help="JSON with 'counts' (see scripts/count_reduced25_train_frames.py) or explicit 'weights' list",
+    )
+    p.add_argument(
+        "--class-weight-scheme",
+        choices=("none", "inv_sqrt", "inv_freq"),
+        default=None,
+        help="With counts: inv_sqrt or inv_freq; none disables (unless JSON has 'weights')",
+    )
+    p.add_argument(
+        "--class-weight-eps",
+        type=float,
+        default=None,
+        help="Smoothing for inv_freq: w ∝ 1/(count+eps) (default from config or 1.0)",
+    )
+    p.add_argument(
+        "--class-weight-clip-max",
+        type=float,
+        default=None,
+        help="After normalizing mean=1, clamp each weight to at most this (optional)",
+    )
     p.add_argument("--no-progress", action="store_true", help="disable tqdm progress bars")
     args = p.parse_args()
     args._cli_reduced = args.reduced is not None
@@ -199,6 +288,10 @@ def parse_args():
     args._cli_no_augment_pitch = bool(args.no_augment_pitch)
     args._cli_augment_prob = args.augment_prob is not None
     args._cli_pitch_shift_max = args.pitch_shift_max is not None
+    args._cli_class_weight_json = args.class_weight_json is not None
+    args._cli_class_weight_scheme = args.class_weight_scheme is not None
+    args._cli_class_weight_eps = args.class_weight_eps is not None
+    args._cli_class_weight_clip_max = args.class_weight_clip_max is not None
     if args.config is None:
         default_cfg = ROOT / "config.yaml"
         if default_cfg.is_file():
@@ -425,7 +518,21 @@ def main():
             model_kw=model_kw,
         )
         print(f"Loaded model weights from {args.resume_path}")
-    criterion = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
+
+    ce_weight: Optional[torch.Tensor] = None
+    if args.class_weight_path is not None:
+        ce_weight = load_class_weight_tensor(
+            args.class_weight_path,
+            num_classes,
+            args.class_weight_scheme,
+            args.class_weight_eps,
+            args.class_weight_clip_max,
+        ).to(device)
+        print(
+            f"class_weight: {args.class_weight_path} scheme={args.class_weight_scheme!r} "
+            f"mean={ce_weight.mean().item():.4f} min={ce_weight.min().item():.4f} max={ce_weight.max().item():.4f}"
+        )
+    criterion = nn.CrossEntropyLoss(weight=ce_weight, ignore_index=IGNORE_INDEX)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = None
     if args.scheduler == "plateau":
@@ -474,6 +581,11 @@ def main():
         "augment_pitch": args.augment_pitch and reduced_25,
         "augment_prob": args.augment_prob,
         "pitch_shift_max": args.pitch_shift_max,
+        "class_weight_path": str(args.class_weight_path) if args.class_weight_path else None,
+        "class_weight_scheme": args.class_weight_scheme,
+        "class_weight_eps": args.class_weight_eps,
+        "class_weight_clip_max": args.class_weight_clip_max,
+        "class_weights": ce_weight.detach().cpu().tolist() if ce_weight is not None else None,
         "num_classes": num_classes,
         "device": str(device),
         "run_stamp": run_stamp,
