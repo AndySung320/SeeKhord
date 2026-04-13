@@ -45,6 +45,7 @@ def build_segments(
     indices: list,
     songs_dir: Path,
     segment_frames: int | None,
+    segment_hop_frames: int | None,
 ) -> list[tuple[str, int, int]]:
     """Mirror ChordDataset segment list (train/val/test indices + label path exists)."""
     segments: list[tuple[str, int, int]] = []
@@ -57,7 +58,10 @@ def build_segments(
         if segment_frames is None:
             segments.append((str(index), 0, T))
         else:
-            for start in range(0, T, segment_frames):
+            hop = int(segment_hop_frames if segment_hop_frames is not None else segment_frames)
+            if hop < 1:
+                raise ValueError("segment_hop_frames must be >= 1 when segment_frames is set")
+            for start in range(0, T, hop):
                 end = min(start + segment_frames, T)
                 segments.append((str(index), start, end))
     return segments
@@ -89,6 +93,12 @@ def main() -> None:
         help="Chunk length (must match training). Default: config train.segment_frames or 200",
     )
     p.add_argument(
+        "--segment-hop-frames",
+        type=int,
+        default=None,
+        help="Stride between neighboring chunks (default: segment_frames; set 100 for 50% overlap with 200-frame chunks)",
+    )
+    p.add_argument(
         "--full-song",
         action="store_true",
         help="One segment per song (segment_frames=None), like training with segment_frames unset",
@@ -118,10 +128,21 @@ def main() -> None:
 
     if args.full_song:
         segment_frames: int | None = None
+        segment_hop_frames: int | None = None
     elif args.segment_frames is not None:
         segment_frames = int(args.segment_frames)
+        if args.segment_hop_frames is not None:
+            segment_hop_frames = int(args.segment_hop_frames)
+        else:
+            sh = tc.get("segment_hop_frames")
+            segment_hop_frames = int(sh) if sh is not None else segment_frames
     else:
         segment_frames = int(tc.get("segment_frames", 200))
+        if args.segment_hop_frames is not None:
+            segment_hop_frames = int(args.segment_hop_frames)
+        else:
+            sh = tc.get("segment_hop_frames")
+            segment_hop_frames = int(sh) if sh is not None else segment_frames
 
     with open(splits_path, encoding="utf-8") as f:
         splits = json.load(f)
@@ -134,7 +155,7 @@ def main() -> None:
         raise SystemExit("chord_vocabulary.json missing reduction_25 (need reduced_25 mapping).")
     reduction = np.asarray(reduction_list, dtype=np.int64)
 
-    segments = build_segments(indices, songs_dir, segment_frames)
+    segments = build_segments(indices, songs_dir, segment_frames, segment_hop_frames)
     if not segments:
         raise SystemExit(f"No segments found (missing labels.npy/features.npy under {songs_dir}?).")
 
@@ -162,6 +183,7 @@ def main() -> None:
         "songs_dir": str(songs_dir),
         "split": args.split,
         "segment_frames": segment_frames,
+        "segment_hop_frames": segment_hop_frames,
         "method": "B_segment_slices_no_pad_no_augment",
         "num_segments": len(segments),
         "total_slice_frames": total_slice_frames,

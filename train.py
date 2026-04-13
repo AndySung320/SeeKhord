@@ -104,6 +104,11 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
     ns.reduced = str(args.reduced if args._cli_reduced else tc.get("reduced", "25"))
     ns.input_dim = int(args.input_dim if args._cli_input_dim else int(tc.get("input_dim", 12)))
     ns.segment_frames = args.segment_frames if args._cli_segment_frames else int(tc.get("segment_frames", 200))
+    if args._cli_segment_hop_frames:
+        ns.segment_hop_frames = int(args.segment_hop_frames)
+    else:
+        sh = tc.get("segment_hop_frames")
+        ns.segment_hop_frames = int(sh) if sh is not None else ns.segment_frames
     ns.batch_size = args.batch_size if args._cli_batch_size else int(tc.get("batch_size", 16))
     ns.epochs = args.epochs if args._cli_epochs else int(tc.get("epochs", 30))
     ns.lr = args.lr if args._cli_lr else float(tc.get("lr", 1e-3))
@@ -198,6 +203,12 @@ def parse_args():
     )
     p.add_argument("--reduced", choices=("full", "25", "61"), default=None, help="label space")
     p.add_argument("--segment-frames", type=int, default=None, help="fixed time length per batch item")
+    p.add_argument(
+        "--segment-hop-frames",
+        type=int,
+        default=None,
+        help="stride between neighboring chunks (default: segment_frames; set 100 for 50% overlap when segment_frames=200)",
+    )
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
@@ -272,6 +283,7 @@ def parse_args():
     args = p.parse_args()
     args._cli_reduced = args.reduced is not None
     args._cli_segment_frames = args.segment_frames is not None
+    args._cli_segment_hop_frames = args.segment_hop_frames is not None
     args._cli_batch_size = args.batch_size is not None
     args._cli_epochs = args.epochs is not None
     args._cli_lr = args.lr is not None
@@ -300,6 +312,8 @@ def parse_args():
         args.reduced = "25"
     if args.segment_frames is None:
         args.segment_frames = 200
+    if args.segment_hop_frames is None:
+        args.segment_hop_frames = args.segment_frames
     if args.batch_size is None:
         args.batch_size = 16
     if args.epochs is None:
@@ -467,6 +481,7 @@ def main():
     print(f"vocabulary: {args.vocab_path}")
     print(f"songs: {args.songs_dir}")
     print(f"input_dim: {args.input_dim}")
+    print(f"segment_frames: {args.segment_frames}, segment_hop_frames: {args.segment_hop_frames}")
 
     reduced_25 = args.reduced == "25"
     reduced_61 = args.reduced == "61"
@@ -485,6 +500,7 @@ def main():
         splits_path=args.splits_path,
         songs_dir=args.songs_dir,
         segment_frames=args.segment_frames,
+        segment_hop_frames=args.segment_hop_frames,
         reduced_25=reduced_25,
         reduced_61=reduced_61,
         vocab_path=args.vocab_path,
@@ -497,6 +513,7 @@ def main():
         splits_path=args.splits_path,
         songs_dir=args.songs_dir,
         segment_frames=args.segment_frames,
+        segment_hop_frames=args.segment_hop_frames,
         reduced_25=reduced_25,
         reduced_61=reduced_61,
         vocab_path=args.vocab_path,
@@ -569,6 +586,7 @@ def main():
         "data_root": str(args.data_root),
         "reduced": args.reduced,
         "segment_frames": args.segment_frames,
+        "segment_hop_frames": args.segment_hop_frames,
         "batch_size": args.batch_size,
         "lr": args.lr,
         "weight_decay": args.weight_decay,
@@ -649,6 +667,7 @@ def main():
                     "num_classes": num_classes,
                     "reduced": args.reduced,
                     "segment_frames": args.segment_frames,
+                    "segment_hop_frames": args.segment_hop_frames,
                     "run_stamp": run_stamp,
                     "meta": meta,
                     "model_class": "ChordCRNN",

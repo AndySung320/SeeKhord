@@ -11,6 +11,7 @@ train:
   reduced: "25"       # full | 25 | 61
   input_dim: 12        # must match features.npy width (84 for songs_cqt84 / --mode cqt84)
   segment_frames: 200
+  segment_hop_frames: 200  # stride between chunks; 100 = 50% overlap when segment_frames=200
   batch_size: 16
   epochs: 30
   lr: 0.001

@@ -42,6 +42,7 @@ class ChordDataset(Dataset):
     """
     - split: "train" | "val" | "test"
     - segment_frames: if set, each item is a fixed-length chunk (with padding); else full song.
+    - segment_hop_frames: step between neighboring chunks. Default = segment_frames (no overlap).
     - reduced_25: 25-class (N + 12 maj + 12 min).
     - reduced_61: 61-class (N + 12 roots x {maj, maj7, 7, min, min7}). Ignored if reduced_25 is True.
     - augment_pitch: train-only random semitone shift; requires reduced_25 (feature roll + label root rotation).
@@ -53,6 +54,7 @@ class ChordDataset(Dataset):
         splits_path: str = SPLITS_PATH,
         songs_dir: str = SONGS_DIR,
         segment_frames: Optional[int] = None,
+        segment_hop_frames: Optional[int] = None,
         reduced_25: bool = False,
         reduced_61: bool = False,
         vocab_path: str = VOCAB_PATH,
@@ -70,6 +72,12 @@ class ChordDataset(Dataset):
         self.indices = splits[split]
         self.songs_dir = Path(songs_dir)
         self.segment_frames = segment_frames
+        self.segment_hop_frames = segment_hop_frames if segment_hop_frames is not None else segment_frames
+        if self.segment_frames is not None:
+            if self.segment_hop_frames is None or self.segment_hop_frames < 1:
+                raise ValueError("segment_hop_frames must be >= 1 when segment_frames is set")
+            if self.segment_hop_frames > self.segment_frames:
+                raise ValueError("segment_hop_frames cannot be greater than segment_frames")
         self.reduced_25 = reduced_25
         self.reduced_61 = reduced_61 and not reduced_25
         self.augment_pitch = augment_pitch
@@ -94,7 +102,8 @@ class ChordDataset(Dataset):
             if segment_frames is None:
                 self._segments.append((index, 0, T))
             else:
-                for start in range(0, T, segment_frames):
+                hop = int(self.segment_hop_frames)
+                for start in range(0, T, hop):
                     end = min(start + segment_frames, T)
                     self._segments.append((index, start, end))
 

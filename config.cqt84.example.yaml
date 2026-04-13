@@ -14,6 +14,7 @@ train:
   reduced: "25"
   input_dim: 84
   segment_frames: 200
+  segment_hop_frames: 200  # set 100 for 50% overlap
   batch_size: 16
   epochs: 30
   lr: 0.001
