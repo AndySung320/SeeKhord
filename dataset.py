@@ -38,6 +38,32 @@ def apply_pitch_shift_reduced25(
     return out_f, out_l
 
 
+# Must match scripts/build_vocabulary.py: order_61 = N + [f"{r}:{q}" for r in ROOTS_12 for q in QUALITIES_61]
+_REDUCED61_N_QUALITIES = 5
+_REDUCED61_MAX_CHORD_ID = 12 * _REDUCED61_N_QUALITIES  # 60
+
+
+def apply_pitch_shift_reduced61(
+    features: np.ndarray, labels: np.ndarray, semitones: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Same feature roll as reduced_25. Rotate reduced_61 labels: ids 1..60 are (root 0..11) * 5 + quality0..4;
+    0 (N) and IGNORE_INDEX unchanged.
+    """
+    if semitones == 0:
+        return features, labels
+    out_f = np.roll(features, shift=semitones, axis=-1)
+    out_l = labels.copy()
+    chord = (out_l >= 1) & (out_l <= _REDUCED61_MAX_CHORD_ID)
+    if chord.any():
+        rel = out_l[chord].astype(np.int64, copy=False) - 1
+        root = rel // _REDUCED61_N_QUALITIES
+        q = rel % _REDUCED61_N_QUALITIES
+        new_root = (root + semitones) % 12
+        out_l[chord] = 1 + new_root * _REDUCED61_N_QUALITIES + q
+    return out_f, out_l
+
+
 class ChordDataset(Dataset):
     """
     - split: "train" | "val" | "test"
@@ -45,7 +71,7 @@ class ChordDataset(Dataset):
     - segment_hop_frames: step between neighboring chunks. Default = segment_frames (no overlap).
     - reduced_25: 25-class (N + 12 maj + 12 min).
     - reduced_61: 61-class (N + 12 roots x {maj, maj7, 7, min, min7}). Ignored if reduced_25 is True.
-    - augment_pitch: train-only random semitone shift; requires reduced_25 (feature roll + label root rotation).
+    - augment_pitch: train-only random semitone shift; use with reduced_25 or reduced_61 (feature roll + label root rotation).
     """
 
     def __init__(
@@ -62,8 +88,10 @@ class ChordDataset(Dataset):
         augment_prob: float = 0.5,
         pitch_shift_max: int = 5,
     ):
-        if augment_pitch and not reduced_25:
-            raise ValueError("augment_pitch is only supported with reduced_25 (N + 12 maj + 12 min)")
+        if augment_pitch and not reduced_25 and not reduced_61:
+            raise ValueError(
+                "augment_pitch requires reduced_25 or reduced_61 (feature roll + matching label root rotation)"
+            )
         if augment_pitch and pitch_shift_max < 1:
             raise ValueError("pitch_shift_max must be >= 1 when augment_pitch is True")
         with open(splits_path, "r", encoding="utf-8") as f:
@@ -133,14 +161,17 @@ class ChordDataset(Dataset):
         if (
             self.split == "train"
             and self.augment_pitch
-            and self.reduced_25
+            and (self.reduced_25 or self.reduced_61)
             and self.augment_prob > 0
             and np.random.random() < self.augment_prob
         ):
             k = self.pitch_shift_max
             choices = [i for i in range(-k, k + 1) if i != 0]
             n = int(np.random.choice(choices))
-            features, labels = apply_pitch_shift_reduced25(features, labels, n)
+            if self.reduced_25:
+                features, labels = apply_pitch_shift_reduced25(features, labels, n)
+            else:
+                features, labels = apply_pitch_shift_reduced61(features, labels, n)
         if self.segment_frames is not None and features.shape[0] < self.segment_frames:
             pad = self.segment_frames - features.shape[0]
             features = np.pad(

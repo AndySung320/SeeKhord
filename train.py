@@ -233,7 +233,7 @@ def parse_args():
     p.add_argument(
         "--no-augment-pitch",
         action="store_true",
-        help="disable train-time pitch roll + reduced_25 label rotation (overrides config)",
+        help="disable train-time pitch roll + reduced label root rotation (25 or 61; overrides config)",
     )
     p.add_argument("--augment-prob", type=float, default=None, help="probability of pitch shift per sample (train)")
     p.add_argument(
@@ -259,7 +259,7 @@ def parse_args():
         "--class-weight-json",
         type=Path,
         default=None,
-        help="JSON with 'counts' (see scripts/count_reduced25_train_frames.py) or explicit 'weights' list",
+        help="JSON with 'counts' (scripts/count_reduced25_train_frames.py or count_reduced61_train_frames.py) or 'weights' list",
     )
     p.add_argument(
         "--class-weight-scheme",
@@ -485,7 +485,7 @@ def main():
 
     reduced_25 = args.reduced == "25"
     reduced_61 = args.reduced == "61"
-    if reduced_25:
+    if reduced_25 or reduced_61:
         print(
             f"augment_pitch: {args.augment_pitch} "
             f"(prob={args.augment_prob}, pitch_shift_max={args.pitch_shift_max}, train only)"
@@ -504,7 +504,7 @@ def main():
         reduced_25=reduced_25,
         reduced_61=reduced_61,
         vocab_path=args.vocab_path,
-        augment_pitch=args.augment_pitch and reduced_25,
+        augment_pitch=args.augment_pitch and (reduced_25 or reduced_61),
         augment_prob=args.augment_prob,
         pitch_shift_max=args.pitch_shift_max,
     )
@@ -596,7 +596,7 @@ def main():
         "scheduler_patience": args.scheduler_patience,
         "scheduler_factor": args.scheduler_factor,
         "scheduler_min_lr": args.scheduler_min_lr,
-        "augment_pitch": args.augment_pitch and reduced_25,
+        "augment_pitch": args.augment_pitch and (reduced_25 or reduced_61),
         "augment_prob": args.augment_prob,
         "pitch_shift_max": args.pitch_shift_max,
         "class_weight_path": str(args.class_weight_path) if args.class_weight_path else None,

@@ -23,12 +23,13 @@ train:
   scheduler_min_lr: 1.0e-6
   num_workers: 0      # Colab usually keep 0
   device: null        # null = auto cuda/cpu
-  # Train-only pitch augmentation (reduced_25 only): np.roll on features + matching label root rotation
+  # Train-only pitch augmentation (reduced_25 or reduced_61): np.roll on features + matching label root rotation
   augment_pitch: true
   augment_prob: 0.5
   pitch_shift_max: 5   # uniform integer in [-max..-1] ∪ [1..max]
-  # Optional CrossEntropy class weights (JSON from scripts/count_reduced25_train_frames.py):
-  # class_weight_json: data/reduced25_train_frame_counts.json
+  # Optional CrossEntropy class weights (JSON from scripts/count_reduced25_train_frames.py or count_reduced61_train_frames.py):
+  # class_weight_json: data/reduced25_train_frame_counts.json   # when train.reduced is "25"
+  # class_weight_json: data/reduced61_train_frame_counts.json    # when train.reduced is "61"
   # class_weight_scheme: inv_sqrt   # inv_sqrt | inv_freq (required if JSON has counts); omit weights with scheme none
   # class_weight_eps: 1.0           # for inv_freq: w ∝ 1/(count+eps)
   # class_weight_clip_max: null    # e.g. 5.0 to cap weights after mean normalization
