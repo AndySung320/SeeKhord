@@ -11,6 +11,7 @@ paths:
   songs: songs_cqt84
 
 train:
+  # model: crnn_ms   # crnn | crnn_attn | crnn_ms — or pass --model
   reduced: "25"
   input_dim: 84
   segment_frames: 200

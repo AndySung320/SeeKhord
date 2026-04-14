@@ -8,6 +8,7 @@ paths:
   songs: songs
 
 train:
+  # model: crnn        # optional: crnn | crnn_attn | crnn_ms (default crnn; or --model)
   reduced: "25"       # full | 25 | 61
   input_dim: 12        # must match features.npy width (84 for songs_cqt84 / --mode cqt84)
   segment_frames: 200

@@ -28,8 +28,10 @@ from dataset import IGNORE_INDEX, ChordDataset, get_num_classes
 from models.crnn import (
     ChordCRNN,
     ChordCRNNAttention,
+    ChordCRNNMultiscale,
     default_chord_crnn_attention_kwargs,
     default_chord_crnn_kwargs,
+    default_chord_crnn_multiscale_kwargs,
 )
 
 
@@ -107,8 +109,8 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
 
     tc = cfg.get("train", {})
     ns.model_type = str(args.model if args._cli_model else tc.get("model", "crnn")).strip().lower()
-    if ns.model_type not in {"crnn", "crnn_attn"}:
-        raise ValueError(f"Unknown model type: {ns.model_type!r}. Use 'crnn' or 'crnn_attn'.")
+    if ns.model_type not in {"crnn", "crnn_attn", "crnn_ms"}:
+        raise ValueError(f"Unknown model type: {ns.model_type!r}. Use 'crnn', 'crnn_attn', or 'crnn_ms'.")
     ns.reduced = str(args.reduced if args._cli_reduced else tc.get("reduced", "25"))
     ns.input_dim = int(args.input_dim if args._cli_input_dim else int(tc.get("input_dim", 12)))
     ns.segment_frames = args.segment_frames if args._cli_segment_frames else int(tc.get("segment_frames", 200))
@@ -222,9 +224,9 @@ def parse_args():
     )
     p.add_argument(
         "--model",
-        choices=("crnn", "crnn_attn"),
+        choices=("crnn", "crnn_attn", "crnn_ms"),
         default=None,
-        help="Model type: crnn (baseline) or crnn_attn (CNN+BiLSTM+multi-head attention)",
+        help="Model: crnn | crnn_attn | crnn_ms (multi-kernel parallel CNN + BiLSTM)",
     )
     p.add_argument("--reduced", choices=("full", "25", "61"), default=None, help="label space")
     p.add_argument("--segment-frames", type=int, default=None, help="fixed time length per batch item")
@@ -574,6 +576,9 @@ def main():
     if args.model_type == "crnn_attn":
         model_kw = default_chord_crnn_attention_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
         model = ChordCRNNAttention(**model_kw).to(device)
+    elif args.model_type == "crnn_ms":
+        model_kw = default_chord_crnn_multiscale_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
+        model = ChordCRNNMultiscale(**model_kw).to(device)
     else:
         model_kw = default_chord_crnn_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
         model = ChordCRNN(**model_kw).to(device)
