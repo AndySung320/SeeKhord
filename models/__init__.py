@@ -1,3 +1,13 @@
-from .crnn import ChordCRNN, default_chord_crnn_kwargs
+from .crnn import (
+    ChordCRNN,
+    ChordCRNNAttention,
+    default_chord_crnn_attention_kwargs,
+    default_chord_crnn_kwargs,
+)
 
-__all__ = ["ChordCRNN", "default_chord_crnn_kwargs"]
+__all__ = [
+    "ChordCRNN",
+    "ChordCRNNAttention",
+    "default_chord_crnn_kwargs",
+    "default_chord_crnn_attention_kwargs",
+]

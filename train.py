@@ -25,7 +25,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dataset import IGNORE_INDEX, ChordDataset, get_num_classes
-from models.crnn import ChordCRNN, default_chord_crnn_kwargs
+from models.crnn import (
+    ChordCRNN,
+    ChordCRNNAttention,
+    default_chord_crnn_attention_kwargs,
+    default_chord_crnn_kwargs,
+)
 
 
 def _resolve_under_root(root: Path, p: str) -> str:
@@ -101,6 +106,9 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
     ns.songs_dir = _resolve_under_root(root, paths.get("songs", "songs"))
 
     tc = cfg.get("train", {})
+    ns.model_type = str(args.model if args._cli_model else tc.get("model", "crnn")).strip().lower()
+    if ns.model_type not in {"crnn", "crnn_attn"}:
+        raise ValueError(f"Unknown model type: {ns.model_type!r}. Use 'crnn' or 'crnn_attn'.")
     ns.reduced = str(args.reduced if args._cli_reduced else tc.get("reduced", "25"))
     ns.input_dim = int(args.input_dim if args._cli_input_dim else int(tc.get("input_dim", 12)))
     ns.segment_frames = args.segment_frames if args._cli_segment_frames else int(tc.get("segment_frames", 200))
@@ -201,6 +209,12 @@ def parse_args():
         default=None,
         help="Override config data_root: folder containing data/ and songs/ (e.g. Colab Drive path)",
     )
+    p.add_argument(
+        "--model",
+        choices=("crnn", "crnn_attn"),
+        default=None,
+        help="Model type: crnn (baseline) or crnn_attn (CNN+BiLSTM+Attention, wider channels)",
+    )
     p.add_argument("--reduced", choices=("full", "25", "61"), default=None, help="label space")
     p.add_argument("--segment-frames", type=int, default=None, help="fixed time length per batch item")
     p.add_argument(
@@ -281,6 +295,7 @@ def parse_args():
     )
     p.add_argument("--no-progress", action="store_true", help="disable tqdm progress bars")
     args = p.parse_args()
+    args._cli_model = args.model is not None
     args._cli_reduced = args.reduced is not None
     args._cli_segment_frames = args.segment_frames is not None
     args._cli_segment_hop_frames = args.segment_hop_frames is not None
@@ -310,6 +325,8 @@ def parse_args():
             args.config = default_cfg
     if args.reduced is None:
         args.reduced = "25"
+    if args.model is None:
+        args.model = "crnn"
     if args.segment_frames is None:
         args.segment_frames = 200
     if args.segment_hop_frames is None:
@@ -360,7 +377,7 @@ def load_model_weights_from_checkpoint(
     model_kw: dict,
 ) -> dict:
     """
-    Load ChordCRNN weights from torch.save dict. Validates num_classes and input_dim vs checkpoint meta.
+    Load model weights from torch.save dict. Validates num_classes and input_dim vs checkpoint meta.
     Returns the raw checkpoint dict (for logging).
     """
     if not path.is_file():
@@ -523,8 +540,13 @@ def main():
         return
 
     num_classes = get_num_classes(reduced_25=reduced_25, reduced_61=reduced_61, vocab_path=args.vocab_path)
-    model_kw = default_chord_crnn_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
-    model = ChordCRNN(**model_kw).to(device)
+    if args.model_type == "crnn_attn":
+        model_kw = default_chord_crnn_attention_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
+        model = ChordCRNNAttention(**model_kw).to(device)
+    else:
+        model_kw = default_chord_crnn_kwargs(num_classes, dropout=args.dropout, input_dim=args.input_dim)
+        model = ChordCRNN(**model_kw).to(device)
+    print(f"model: {model.__class__.__name__}")
     resume_ckpt = None
     if args.resume_path is not None:
         resume_ckpt = load_model_weights_from_checkpoint(
@@ -585,6 +607,7 @@ def main():
     meta = {
         "data_root": str(args.data_root),
         "reduced": args.reduced,
+        "model_type": args.model_type,
         "segment_frames": args.segment_frames,
         "segment_hop_frames": args.segment_hop_frames,
         "batch_size": args.batch_size,
@@ -670,7 +693,7 @@ def main():
                     "segment_hop_frames": args.segment_hop_frames,
                     "run_stamp": run_stamp,
                     "meta": meta,
-                    "model_class": "ChordCRNN",
+                    "model_class": model.__class__.__name__,
                     "model_init_kwargs": {k: (list(v) if isinstance(v, tuple) else v) for k, v in model_kw.items()},
                     "model_repr": str(model),
                 },
