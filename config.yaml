@@ -27,6 +27,8 @@ train:
   augment_pitch: true
   augment_prob: 0.5
   pitch_shift_max: 5   # uniform integer in [-max..-1] ∪ [1..max]
+  early_stop_patience: 0   # 0 = disabled (default); N>0: stop if val loss does not improve for N epochs
+  early_stop_min_delta: 0.0
   # Optional CrossEntropy class weights (JSON from scripts/count_reduced25_train_frames.py or count_reduced61_train_frames.py):
   # class_weight_json: data/reduced25_train_frame_counts.json   # when train.reduced is "25"
   # class_weight_json: data/reduced61_train_frame_counts.json    # when train.reduced is "61"
@@ -34,7 +36,7 @@ train:
   # class_weight_eps: 1.0           # for inv_freq: w ∝ 1/(count+eps)
   # class_weight_clip_max: null    # e.g. 5.0 to cap weights after mean normalization
 
-# Saves {checkpoint_prefix}_{YYYYMMDD_HHMMSS}.pt and same for history under dir
+# Saves {checkpoint_prefix}_{model_type}_{YYYYMMDD_HHMMSS}.pt and {history_prefix}_{model_type}_{YYYYMMDD_HHMMSS}.json
 output:
   dir: checkpoints
   checkpoint_prefix: chord_crnn

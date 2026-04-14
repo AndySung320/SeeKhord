@@ -29,9 +29,12 @@ train:
   augment_pitch: true
   augment_prob: 0.5
   pitch_shift_max: 5
+  early_stop_patience: 0
+  early_stop_min_delta: 0.0
   # Optional: class_weight_json + class_weight_scheme (inv_sqrt | inv_freq); see config.yaml comments
 
 output:
   dir: checkpoints
+  # Files: {checkpoint_prefix}_{model_type}_{timestamp}.pt and {history_prefix}_{model_type}_{timestamp}.json
   checkpoint_prefix: chord_crnn_cqt84
   history_prefix: training_history_cqt84

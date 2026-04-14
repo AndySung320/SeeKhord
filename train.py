@@ -3,7 +3,7 @@ Train frame-level chord recognition (CRNN on precomputed frame features).
 Run from project root: python train.py
   or: python train.py --config config.yaml
   Colab: set data_root + output.dir (e.g. Drive checkpoints folder); ckpt/history get a datetime suffix.
-  Resume: python train.py --config ... --resume path/to/chord_crnn_cqt84_YYYYMMDD.pt
+  Resume: python train.py --config ... --resume path/to/{checkpoint_prefix}_{model_type}_YYYYMMDD_HHMMSS.pt
     (loads model weights only; optimizer starts fresh. New run_stamp / history / save_path.)
 """
 from __future__ import annotations
@@ -151,6 +151,17 @@ def build_train_namespace(args: argparse.Namespace) -> argparse.Namespace:
         else int(tc.get("pitch_shift_max", 5))
     )
 
+    ns.early_stop_patience = int(
+        args.early_stop_patience
+        if args._cli_early_stop_patience
+        else int(tc.get("early_stop_patience", 0))
+    )
+    ns.early_stop_min_delta = float(
+        args.early_stop_min_delta
+        if args._cli_early_stop_min_delta
+        else float(tc.get("early_stop_min_delta", 0.0))
+    )
+
     oc = cfg.get("output", {})
     if "dir" in oc:
         out_dir_raw = oc["dir"]
@@ -213,7 +224,7 @@ def parse_args():
         "--model",
         choices=("crnn", "crnn_attn"),
         default=None,
-        help="Model type: crnn (baseline) or crnn_attn (CNN+BiLSTM+Attention, wider channels)",
+        help="Model type: crnn (baseline) or crnn_attn (CNN+BiLSTM+multi-head attention)",
     )
     p.add_argument("--reduced", choices=("full", "25", "61"), default=None, help="label space")
     p.add_argument("--segment-frames", type=int, default=None, help="fixed time length per batch item")
@@ -293,6 +304,18 @@ def parse_args():
         default=None,
         help="After normalizing mean=1, clamp each weight to at most this (optional)",
     )
+    p.add_argument(
+        "--early-stop-patience",
+        type=int,
+        default=None,
+        help="Stop after N epochs without val loss improvement (0=off; default train.early_stop_patience in YAML or 0)",
+    )
+    p.add_argument(
+        "--early-stop-min-delta",
+        type=float,
+        default=None,
+        help="Minimum val loss decrease to count as improvement (default train.early_stop_min_delta or 0)",
+    )
     p.add_argument("--no-progress", action="store_true", help="disable tqdm progress bars")
     args = p.parse_args()
     args._cli_model = args.model is not None
@@ -319,6 +342,8 @@ def parse_args():
     args._cli_class_weight_scheme = args.class_weight_scheme is not None
     args._cli_class_weight_eps = args.class_weight_eps is not None
     args._cli_class_weight_clip_max = args.class_weight_clip_max is not None
+    args._cli_early_stop_patience = args.early_stop_patience is not None
+    args._cli_early_stop_min_delta = args.early_stop_min_delta is not None
     if args.config is None:
         default_cfg = ROOT / "config.yaml"
         if default_cfg.is_file():
@@ -490,8 +515,9 @@ def main():
     run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_started_iso = datetime.now().isoformat(timespec="seconds")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    save_path = args.output_dir / f"{args.checkpoint_prefix}_{run_stamp}.pt"
-    history_path = args.output_dir / f"{args.history_prefix}_{run_stamp}.json"
+    ck_stem = f"{args.checkpoint_prefix}_{args.model_type}_{run_stamp}"
+    save_path = args.output_dir / f"{ck_stem}.pt"
+    history_path = args.output_dir / f"{args.history_prefix}_{args.model_type}_{run_stamp}.json"
 
     print(f"data_root: {args.data_root}")
     print(f"splits: {args.splits_path}")
@@ -511,6 +537,11 @@ def main():
     print(f"history: {history_path}")
     if args.resume_path is not None:
         print(f"resume: {args.resume_path}")
+    if args.early_stop_patience > 0:
+        print(
+            f"early_stop: patience={args.early_stop_patience} min_delta={args.early_stop_min_delta} "
+            f"(val loss; checkpoint still best-so-far)"
+        )
 
     train_ds = ChordDataset(
         "train",
@@ -619,6 +650,10 @@ def main():
         "scheduler_patience": args.scheduler_patience,
         "scheduler_factor": args.scheduler_factor,
         "scheduler_min_lr": args.scheduler_min_lr,
+        "early_stop_patience": args.early_stop_patience,
+        "early_stop_min_delta": args.early_stop_min_delta,
+        "early_stopped": False,
+        "epochs_completed": 0,
         "augment_pitch": args.augment_pitch and (reduced_25 or reduced_61),
         "augment_prob": args.augment_prob,
         "pitch_shift_max": args.pitch_shift_max,
@@ -642,6 +677,9 @@ def main():
     }
     history_epochs: list = []
     best_val = float("inf")
+    epochs_no_improve = 0
+    es_patience = int(args.early_stop_patience)
+    es_delta = float(args.early_stop_min_delta)
     show = not args_cli.no_progress
     for epoch in range(1, args.epochs + 1):
         tr_loss, tr_acc = run_epoch(
@@ -681,14 +719,17 @@ def main():
                 "val_acc": round(va_acc, 6),
             }
         )
+        meta["epochs_completed"] = epoch
         write_history(history_path, meta, history_epochs)
-        if va_loss < best_val:
+        if va_loss < best_val - es_delta:
             best_val = va_loss
+            epochs_no_improve = 0
             torch.save(
                 {
                     "model": model.state_dict(),
                     "num_classes": num_classes,
                     "reduced": args.reduced,
+                    "model_type": args.model_type,
                     "segment_frames": args.segment_frames,
                     "segment_hop_frames": args.segment_hop_frames,
                     "run_stamp": run_stamp,
@@ -700,6 +741,16 @@ def main():
                 save_path,
             )
             print(f"  saved {save_path}")
+        else:
+            epochs_no_improve += 1
+            if es_patience > 0 and epochs_no_improve >= es_patience:
+                meta["early_stopped"] = True
+                write_history(history_path, meta, history_epochs)
+                print(
+                    f"Early stopping: val loss did not improve by > {es_delta} for {es_patience} epochs "
+                    f"(epoch {epoch}/{args.epochs}). Best weights: {save_path}"
+                )
+                break
 
     print(f"History written to {history_path}")
 
